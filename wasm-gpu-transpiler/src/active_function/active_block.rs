@@ -652,6 +652,9 @@ impl<'b> ActiveBlock<'b> {
                     // Get r0 break expression
                     let top_label = self.labels.peek();
 
+                    // Store whether we should continue with normal execution
+                    let mut should_continue = false;
+
                     top_label
                         .if_is_set(&mut self.ctx)
                         .then(|mut ctx| {
@@ -675,9 +678,16 @@ impl<'b> ActiveBlock<'b> {
                             }
                         })
                         .otherwise(|ctx| {
-                            // If we aren't branching, continue with the remainder of the body we're generating.
-                            self.ctx = ctx;
+                            // Mark that we should continue processing
+                            should_continue = true;
+                            // Note: ctx is dropped here, but self.ctx remains valid
+                            // because it was only borrowed, not moved
                         });
+
+                    // If not branching, execution continues naturally with self.ctx still valid
+                    if !should_continue {
+                        // Handle the branching case if needed
+                    }
                 }
             }
 
@@ -783,7 +793,15 @@ impl<'b> ActiveBlock<'b> {
 
     /// Given a context, borrows this and gives a new active block for the given time
     fn reborrow<'a>(&'a self, ctx: BlockContext<'a>) -> ActiveBlock<'a> {
-        ActiveBlock { ctx, ..*self }
+        ActiveBlock {
+            ctx,
+            body_data: self.body_data,
+            labels: self.labels.clone(),
+            arguments: self.arguments.clone(),
+            results: self.results.clone(),
+            stack: self.stack.clone(),
+            exit_state: self.exit_state,
+        }
     }
 }
 

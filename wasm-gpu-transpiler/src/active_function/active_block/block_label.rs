@@ -15,6 +15,7 @@ static BLOCK_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// This is excessive, and we could optimise this system to only include propogation variables where required,
 /// but this reduces the simplicity of our code and may introduce bugs. Instead, we trust the optimising compiler
 /// of both spirv-tools and the driver to remove excess, leaving us to focus on correctness.
+#[derive(Clone)]
 pub(super) struct BlockLabel {
     block_id: usize,
     inner: FnLocal,

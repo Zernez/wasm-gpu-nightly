@@ -48,6 +48,17 @@ impl<'a, T> LinkedStack<'a, T> {
     }
 }
 
+// ===== AGGIUNTA: Implementazione di Clone per LinkedStack =====
+impl<'a, T: Clone> Clone for LinkedStack<'a, T> {
+    fn clone(&self) -> Self {
+        LinkedStack {
+            value: self.value.clone(),
+            parent: self.parent,
+        }
+    }
+}
+// ===============================================================
+
 pub(crate) struct PeekedLinkedStack<'a, T> {
     node: &'a LinkedStack<'a, T>,
     remaining: usize,
