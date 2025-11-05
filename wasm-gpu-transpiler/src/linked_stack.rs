@@ -1,5 +1,6 @@
 /// A linked stack is like a linked list, but where each node is immutably borrowed to push the next value.
 /// This essentially 'freezes' the nodes in the stack until the nodes above it are popped via drops.
+#[derive(Clone, Copy)]
 pub(crate) struct LinkedStack<'a, T> {
     value: T,
     parent: Option<&'a LinkedStack<'a, T>>,
@@ -47,17 +48,6 @@ impl<'a, T> LinkedStack<'a, T> {
         self.value
     }
 }
-
-// ===== AGGIUNTA: Implementazione di Clone per LinkedStack =====
-impl<'a, T: Clone> Clone for LinkedStack<'a, T> {
-    fn clone(&self) -> Self {
-        LinkedStack {
-            value: self.value.clone(),
-            parent: self.parent,
-        }
-    }
-}
-// ===============================================================
 
 pub(crate) struct PeekedLinkedStack<'a, T> {
     node: &'a LinkedStack<'a, T>,

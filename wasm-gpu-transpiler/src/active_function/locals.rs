@@ -7,8 +7,8 @@ use wasmparser::ValType;
 use super::arguments::WasmFnArgs;
 
 /// A local in a function
-#[derive(Clone)]
-pub(crate) struct FnLocal {
+#[derive(Clone, Debug)]
+pub struct FnLocal {
     /// The type of the function argument
     pub(crate) ty: naga::Handle<naga::Type>,
     /// The expression giving the parameter in the body of the function

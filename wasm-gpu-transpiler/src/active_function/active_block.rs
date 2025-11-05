@@ -419,7 +419,6 @@ impl<'b> ActiveBlock<'b> {
         args.reverse();
 
         // Make new block, temporarily moving out of this
-        let mut inner_block = naga::Block::default();
         let mut inner_active_block = ActiveBlock::new(
             (&mut self.ctx).into(),
             block_type,
@@ -546,7 +545,10 @@ impl<'b> ActiveBlock<'b> {
             loop_body
                 .ctx
                 .test(trapped_condition)
-                .then(|ctx| ctx.stop_loop());
+                .then(|ctx| {
+                    // Manually push Break statement instead of calling stop_loop()
+                    ctx.block.push(naga::Statement::Break, naga::Span::UNDEFINED)
+                });
 
             // Write args
             loop_body.assign_arguments(args);
@@ -556,8 +558,8 @@ impl<'b> ActiveBlock<'b> {
             debug_assert_eq!(end, EndInstruction::End);
             let res = loop_body.finish();
 
-            // Loops exit if they don't continue
-            ctx.stop_loop();
+            // Loops exit if they don't continue - manually push Break
+            ctx.block.push(naga::Statement::Break, naga::Span::UNDEFINED);
 
             Ok(res)
         })?;
@@ -592,7 +594,9 @@ impl<'b> ActiveBlock<'b> {
         on_rp_branching: impl Fn(&mut ActiveBlock<'_>),
     ) -> build::Result<EndInstruction> {
         let end_instruction = loop {
+            // Get owned operation (cloned internally in eat_basic_block)
             let operation = self.eat_basic_block(instructions)?;
+            
             let state = match operation {
                 ControlFlowOperator::End => {
                     break EndInstruction::End;
@@ -601,11 +605,11 @@ impl<'b> ActiveBlock<'b> {
                 ControlFlowOperator::Else => {
                     break EndInstruction::Else;
                 }
-                ControlFlowOperator::Br { relative_depth } => self.do_br(*relative_depth),
-                ControlFlowOperator::BrIf { relative_depth } => self.do_br_if(*relative_depth),
-                ControlFlowOperator::Block { blockty } => self.do_block(*blockty, instructions)?,
-                ControlFlowOperator::If { blockty } => self.do_if(*blockty, instructions)?,
-                ControlFlowOperator::Loop { blockty } => self.do_loop(*blockty, instructions)?,
+                ControlFlowOperator::Br { relative_depth } => self.do_br(relative_depth),
+                ControlFlowOperator::BrIf { relative_depth } => self.do_br_if(relative_depth),
+                ControlFlowOperator::Block { blockty } => self.do_block(blockty, instructions)?,
+                ControlFlowOperator::If { blockty } => self.do_if(blockty, instructions)?,
+                ControlFlowOperator::Loop { blockty } => self.do_loop(blockty, instructions)?,
                 ControlFlowOperator::Return => self.do_return(),
                 ControlFlowOperator::BrTable { targets } => unimplemented!(),
                 ControlFlowOperator::Call { function_index } => unimplemented!(),
@@ -646,48 +650,66 @@ impl<'b> ActiveBlock<'b> {
                 }
                 ControlFlowState {
                     lower_unconditional_depth: None,
-                    lower_conditional_depth: Some(relative_depth),
+                    lower_conditional_depth: Some(_relative_depth),
                     ..
                 } => {
                     // Get r0 break expression
                     let top_label = self.labels.peek();
-
-                    // Store whether we should continue with normal execution
-                    let mut should_continue = false;
-
+                    
+                    // Clone necessary data before branching to avoid borrow issues
+                    let labels_clone = self.labels.clone();
+                    let body_data = self.body_data;
+                    let arguments_clone = self.arguments.clone();
+                    let results_clone = self.results.clone();
+                    let stack_clone = self.stack.clone();
+                    let exit_state_val = self.exit_state;
+                    
                     top_label
                         .if_is_set(&mut self.ctx)
                         .then(|mut ctx| {
                             // Reset our break expression if it were set.
                             top_label.unset(&mut ctx);
-
-                            if let Some(parent_label) = self.labels.peek_nth(1) {
+                            
+                            if let Some(parent_label) = labels_clone.peek_nth(1) {
                                 parent_label
                                     .if_is_set(&mut ctx)
-                                    .then(|mut ctx| {
-                                        let mut rp_branching = self.reborrow(ctx);
+                                    .then(|ctx| {
+                                        let mut rp_branching = ActiveBlock {
+                                            ctx,
+                                            body_data,
+                                            labels: labels_clone.clone(),
+                                            arguments: arguments_clone.clone(),
+                                            results: results_clone.clone(),
+                                            stack: stack_clone.clone(),
+                                            exit_state: exit_state_val,
+                                        };
                                         on_rp_branching(&mut rp_branching);
                                     })
-                                    .otherwise(|mut ctx| {
-                                        let mut r0_branching = self.reborrow(ctx);
+                                    .otherwise(|ctx| {
+                                        let mut r0_branching = ActiveBlock {
+                                            ctx,
+                                            body_data,
+                                            labels: labels_clone.clone(),
+                                            arguments: arguments_clone.clone(),
+                                            results: results_clone.clone(),
+                                            stack: stack_clone.clone(),
+                                            exit_state: exit_state_val,
+                                        };
                                         on_r0_branching(&mut r0_branching);
                                     });
                             } else {
-                                let mut r0_branching = self.reborrow(ctx);
+                                let mut r0_branching = ActiveBlock {
+                                    ctx,
+                                    body_data,
+                                    labels: labels_clone,
+                                    arguments: arguments_clone,
+                                    results: results_clone,
+                                    stack: stack_clone,
+                                    exit_state: exit_state_val,
+                                };
                                 on_r0_branching(&mut r0_branching);
                             }
-                        })
-                        .otherwise(|ctx| {
-                            // Mark that we should continue processing
-                            should_continue = true;
-                            // Note: ctx is dropped here, but self.ctx remains valid
-                            // because it was only borrowed, not moved
                         });
-
-                    // If not branching, execution continues naturally with self.ctx still valid
-                    if !should_continue {
-                        // Handle the branching case if needed
-                    }
                 }
             }
 
@@ -726,10 +748,12 @@ impl<'b> ActiveBlock<'b> {
                     let value = naga_expr!(active => Load(src.expression));
                     active.ctx.store(dst.expression, value);
                 }
-                active.ctx.resume_loop();
+                // Manually push Continue statement instead of calling resume_loop()
+                active.ctx.block.push(naga::Statement::Continue, naga::Span::UNDEFINED);
             },
             |active| {
-                active.ctx.stop_loop();
+                // Manually push Break statement instead of calling stop_loop()
+                active.ctx.block.push(naga::Statement::Break, naga::Span::UNDEFINED);
             },
         )
     }
@@ -740,12 +764,12 @@ impl<'b> ActiveBlock<'b> {
 
         // Deconstruct
         let Self {
-            ctx,
-            body_data,
-            labels,
-            arguments,
+            ctx: _,
+            body_data: _,
+            labels: _,
+            arguments: _,
             results,
-            stack,
+            stack: _,
             exit_state,
         } = self;
 
@@ -753,10 +777,10 @@ impl<'b> ActiveBlock<'b> {
     }
 
     /// Fills instructions until some control flow instruction
-    fn eat_basic_block<'a: 'c, 'c, 's>(
-        &'s mut self,
+    fn eat_basic_block<'a: 'c, 'c>(
+        &mut self,
         instructions: &mut impl Iterator<Item = &'c OperatorByProposal<'a>>,
-    ) -> build::Result<&'c ControlFlowOperator> {
+    ) -> build::Result<ControlFlowOperator<'a>> {
         let mut last_op = None;
         while let Some(operation) = instructions.next() {
             match operation {
@@ -788,7 +812,23 @@ impl<'b> ActiveBlock<'b> {
             };
         }
 
-        return Ok(last_op.expect("blocks should be balanced"));
+        return Ok(match last_op.expect("blocks should be balanced") {
+            ControlFlowOperator::End => ControlFlowOperator::End,
+            ControlFlowOperator::Else => ControlFlowOperator::Else,
+            ControlFlowOperator::Return => ControlFlowOperator::Return,
+            ControlFlowOperator::Br { relative_depth } => ControlFlowOperator::Br { relative_depth: *relative_depth },
+            ControlFlowOperator::BrIf { relative_depth } => ControlFlowOperator::BrIf { relative_depth: *relative_depth },
+            ControlFlowOperator::BrTable { targets } => ControlFlowOperator::BrTable { targets: targets.clone() },
+            ControlFlowOperator::Block { blockty } => ControlFlowOperator::Block { blockty: *blockty },
+            ControlFlowOperator::If { blockty } => ControlFlowOperator::If { blockty: *blockty },
+            ControlFlowOperator::Loop { blockty } => ControlFlowOperator::Loop { blockty: *blockty },
+            ControlFlowOperator::Call { function_index } => ControlFlowOperator::Call { function_index: *function_index },
+            ControlFlowOperator::CallIndirect { type_index, table_index, table_byte } => ControlFlowOperator::CallIndirect { 
+                type_index: *type_index, 
+                table_index: *table_index, 
+                table_byte: *table_byte 
+            },
+        });
     }
 
     /// Given a context, borrows this and gives a new active block for the given time
@@ -832,16 +872,17 @@ impl<'b> ActiveBlock<'b> {
 
     /// Calls trap, recording the given flag
     fn append_trap(&mut self, trap_id: Trap) -> build::Result<()> {
-        let mut ctx = self.into();
-        self.body_data
-            .std_objects
-            .preamble
-            .trap_values
-            .emit_set_trap(
-                &mut ctx,
-                trap_id,
-                self.body_data.std_objects.preamble.trap_state,
-            );
+        // Store references before creating context to avoid borrow issues
+        let trap_state = self.body_data.std_objects.preamble.trap_state;
+        let trap_values = &self.body_data.std_objects.preamble.trap_values;
+        
+        let mut ctx: BlockContext<'_> = (&mut self.ctx).into();
+        
+        trap_values.emit_set_trap(
+            &mut ctx,
+            trap_id,
+            trap_state,
+        );
 
         Ok(())
     }
@@ -985,6 +1026,6 @@ impl<'b> ActiveBlock<'b> {
 
 impl<'a, 'b> From<&'a mut ActiveBlock<'b>> for BlockContext<'a> {
     fn from(value: &'a mut ActiveBlock<'b>) -> Self {
-        value.ctx
+        (&mut value.ctx).into()
     }
 }

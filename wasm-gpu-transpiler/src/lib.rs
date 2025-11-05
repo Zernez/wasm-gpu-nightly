@@ -1,5 +1,4 @@
 #![feature(macro_metavar_expr)]
-#![feature(slice_as_chunks)]
 #![feature(int_roundings)]
 #![recursion_limit = "4096"]
 
