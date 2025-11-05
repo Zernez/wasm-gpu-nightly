@@ -16,7 +16,7 @@ static BLOCK_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// but this reduces the simplicity of our code and may introduce bugs. Instead, we trust the optimising compiler
 /// of both spirv-tools and the driver to remove excess, leaving us to focus on correctness.
 #[derive(Clone)]
-pub(super) struct BlockLabel {
+pub struct BlockLabel {
     block_id: usize,
     inner: FnLocal,
     false_expr: naga::Handle<naga::Expression>,
@@ -47,7 +47,7 @@ impl BlockLabel {
 
 /// Generates a set of labels (local booleans) used for jumping through many scopes at once. See [`BlockLabel`].
 #[derive(Clone, Copy)]
-pub(super) struct BlockLabelGen {
+pub struct BlockLabelGen {
     /// Held for initialising block labels
     bool_ty: naga::Handle<naga::Type>,
     false_expr: naga::Handle<naga::Expression>,
